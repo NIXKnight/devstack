@@ -17,6 +17,12 @@ else
     exit 1
 fi
 
+if [ -n "${OPENEDX_RELEASE}" ]; then
+    OPENEDX_GIT_BRANCH=open-release/${OPENEDX_RELEASE}
+else
+    OPENEDX_GIT_BRANCH=master
+fi
+
 repos=(
     "https://github.com/edx/course-discovery.git"
     "https://github.com/edx/credentials.git"
@@ -40,11 +46,6 @@ _checkout ()
 {
     repos_to_checkout=("$@")
 
-    if [ -z "$OPENEDX_RELEASE" ]; then
-        branch="master"
-    else
-        branch="open-release/${OPENEDX_RELEASE}"
-    fi
     for repo in "${repos_to_checkout[@]}"
     do
         # Use Bash's regex match operator to capture the name of the repo.
@@ -54,10 +55,9 @@ _checkout ()
 
         # If a directory exists and it is nonempty, assume the repo has been cloned.
         if [ -d "$name" -a -n "$(ls -A "$name" 2>/dev/null)" ]; then
+            echo "Checking out branch ${OPENEDX_GIT_BRANCH} of $name"
             cd $name
-            echo "Checking out branch $branch of $name"
-            git pull
-            git checkout "$branch"
+            _checkout_and_update_branch
             cd ..
         fi
     done
@@ -72,7 +72,6 @@ _clone ()
 {
     # for repo in ${repos[*]}
     repos_to_clone=("$@")
-
     for repo in "${repos_to_clone[@]}"
     do
         # Use Bash's regex match operator to capture the name of the repo.
@@ -80,21 +79,34 @@ _clone ()
         [[ $repo =~ $name_pattern ]]
         name="${BASH_REMATCH[1]}"
 
-        # If a directory exists and it is nonempty, assume the repo has been checked out.
+        # If a directory exists and it is nonempty, assume the repo has been checked out
+        # and only make sure it's on the required branch
         if [ -d "$name" -a -n "$(ls -A "$name" 2>/dev/null)" ]; then
-            printf "The [%s] repo is already checked out. Continuing.\n" $name
+            printf "The [%s] repo is already checked out. Checking for updates.\n" $name
+            cd ${DEVSTACK_WORKSPACE}/${name}
+            _checkout_and_update_branch
+            cd ..
         else
             if [ "${SHALLOW_CLONE}" == "1" ]; then
-                git clone -c core.symlinks=true --depth=1 $repo
+                git clone --single-branch -b ${OPENEDX_GIT_BRANCH} -c core.symlinks=true --depth=1 ${repo}
             else
-                git clone -c core.symlinks=true $repo
-            fi
-            if [ -n "${OPENEDX_RELEASE}" ]; then
-                git checkout open-release/${OPENEDX_RELEASE}
+                git clone --single-branch -b ${OPENEDX_GIT_BRANCH} -c core.symlinks=true ${repo}
             fi
         fi
     done
     cd - &> /dev/null
+}
+
+_checkout_and_update_branch ()
+{
+    GIT_SYMBOLIC_REF="$(git symbolic-ref HEAD 2>/dev/null)"
+    BRANCH_NAME=${GIT_SYMBOLIC_REF##refs/heads/}
+    if [ "${BRANCH_NAME}" == "${OPENEDX_GIT_BRANCH}" ]; then
+        git pull origin ${OPENEDX_GIT_BRANCH}
+    else
+        git fetch origin ${OPENEDX_GIT_BRANCH}:${OPENEDX_GIT_BRANCH}
+        git checkout ${OPENEDX_GIT_BRANCH}
+    fi
 }
 
 clone ()
